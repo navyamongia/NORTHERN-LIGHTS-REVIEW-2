@@ -3,6 +3,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta, time
+from math import asin, cos, radians, sin, sqrt
 
 app = Flask(__name__)
 
@@ -241,6 +242,19 @@ def register():
         }), 500
 
 
+@app.route('/api/session', methods=['GET'])
+def current_session():
+    if 'user_id' not in session:
+        return jsonify({'authenticated': False, 'user': None}), 200
+    return jsonify({'authenticated': True, 'user': {
+        'id': session['user_id'],
+        'name': session.get('user_name', ''),
+        'role': session['user_role'],
+    }}), 200
+
+
+
+
 # =========================================================
 # LOGIN
 # =========================================================
@@ -442,6 +456,7 @@ class FoodItem(db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     expires_at = db.Column(db.DateTime, nullable=False)
     status = db.Column(db.String(30), nullable=False, default="listed")
+    restaurant = db.relationship("Restaurant")
 
 
 def serialize_food_item(item):
@@ -505,6 +520,64 @@ def create_donor_donation():
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": "Unable to create donation.", "details": str(e)}), 500
+
+
+def distance_km(lat1, lon1, lat2, lon2):
+    earth_radius_km = 6371
+    d_lat = radians(lat2 - lat1)
+    d_lon = radians(lon2 - lon1)
+    a = sin(d_lat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(d_lon / 2) ** 2
+    return earth_radius_km * 2 * asin(sqrt(a))
+
+
+@app.route('/api/ngo/location', methods=['PUT'])
+def update_ngo_location():
+    if 'user_id' not in session:
+        return jsonify({'error': 'You must be logged in.'}), 401
+    if session.get('user_role') != 'ngo':
+        return jsonify({'error': 'Only NGOs can update location.'}), 403
+
+    data = request.get_json() or {}
+    try:
+        latitude = float(data['latitude'])
+        longitude = float(data['longitude'])
+        if not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
+            raise ValueError
+    except (KeyError, TypeError, ValueError):
+        return jsonify({'error': 'Valid latitude and longitude are required.'}), 400
+
+    ngo = NGO.query.filter_by(ngo_id=session['user_id']).first()
+    if not ngo:
+        return jsonify({'error': 'NGO account not found.'}), 404
+    ngo.latitude = latitude
+    ngo.longitude = longitude
+    db.session.commit()
+    return jsonify({'status': 'success', 'location': {'latitude': latitude, 'longitude': longitude}}), 200
+
+
+@app.route('/api/ngo/nearby-food', methods=['GET'])
+def get_nearby_food():
+    if 'user_id' not in session:
+        return jsonify({'error': 'You must be logged in.'}), 401
+    if session.get('user_role') != 'ngo':
+        return jsonify({'error': 'Only NGOs can view nearby food.'}), 403
+
+    ngo = NGO.query.filter_by(ngo_id=session['user_id']).first()
+    if not ngo:
+        return jsonify({'error': 'NGO account not found.'}), 404
+
+    now = datetime.utcnow()
+    items = FoodItem.query.join(Restaurant, FoodItem.restaurant_id == Restaurant.restaurant_id).filter(
+        FoodItem.status == 'listed', FoodItem.expires_at > now
+    ).all()
+    nearby = []
+    for item in items:
+        km = distance_km(float(ngo.latitude), float(ngo.longitude), float(item.restaurant.latitude), float(item.restaurant.longitude))
+        if km <= 10:
+            nearby.append({**serialize_food_item(item), 'donor_name': item.restaurant.name, 'distance_km': round(km, 2), 'latitude': float(item.restaurant.latitude), 'longitude': float(item.restaurant.longitude)})
+
+    nearby.sort(key=lambda item: item['distance_km'])
+    return jsonify({'status': 'success', 'radius_km': 10, 'location': {'latitude': float(ngo.latitude), 'longitude': float(ngo.longitude)}, 'donations': nearby}), 200
 
 
 # =========================================================

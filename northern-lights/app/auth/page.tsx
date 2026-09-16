@@ -4,6 +4,7 @@ import { FormEvent, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ArrowRight, Building2, CheckCircle2, HandHeart, Leaf, LockKeyhole, Mail, Sparkles, UserRound } from 'lucide-react'
 import { authenticate, UserRole } from '@/lib/auth-api'
+import { useAuth } from '@/lib/auth-context'
 
 const roles: Array<{ id: UserRole; label: string; detail: string; icon: typeof Building2 }> = [
   { id: 'donor', label: 'Food donor', detail: 'Hotel, restaurant or campus kitchen', icon: Building2 },
@@ -11,6 +12,7 @@ const roles: Array<{ id: UserRole; label: string; detail: string; icon: typeof B
 ]
 
 export default function AuthPage() {
+  const { setUserFromAuth } = useAuth()
   const router = useRouter()
   const [mode, setMode] = useState<'signin' | 'signup'>('signin')
   const [role, setRole] = useState<UserRole>('donor')
@@ -33,13 +35,11 @@ export default function AuthPage() {
     setIsSubmitting(true)
     try {
       const result = await authenticate({ mode, role, name: name.trim(), email, password })
+      setUserFromAuth(result)
       setSuccess(`${mode === 'signin' ? 'Welcome back' : 'Account created'} — ${result.user.name}.`)
       setPassword('')
-         if (result.user.role === 'donor') {
-      router.push('/donor')
-    } else if (result.user.role === 'ngo') {
-      router.push('/ngo')
-    }
+      const destination = result.user.role === 'admin' ? '/admin' : result.user.role === 'ngo' ? '/ngo' : '/donor'
+      window.setTimeout(() => router.push(destination), 400)
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Something went wrong.')
     } finally {

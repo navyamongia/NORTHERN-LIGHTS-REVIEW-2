@@ -1,7 +1,8 @@
 'use client'
 
-import { createContext, useContext, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { AuthResponse, UserRole } from '@/lib/auth-api'
+import { apiRequest } from '@/lib/api'
 
 export type AppUserRole = UserRole | 'admin'
 
@@ -25,6 +26,14 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<CurrentUser | null>(null)
+  const [ready, setReady] = useState(false)
+
+  useEffect(() => {
+    apiRequest<{ authenticated: boolean; user: CurrentUser | null }>('/api/session')
+      .then((result) => setUser(result.user))
+      .catch(() => setUser(null))
+      .finally(() => setReady(true))
+  }, [])
 
   const value = useMemo<AuthContextValue>(() => ({
     user,
@@ -32,7 +41,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isAuthenticated: Boolean(user),
     setUser,
     setUserFromAuth: (response) => setUser(response.user),
-    signOut: () => setUser(null),
+    signOut: () => {
+      void apiRequest('/api/logout', { method: 'POST' }).finally(() => setUser(null))
+    },
   }), [user])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
